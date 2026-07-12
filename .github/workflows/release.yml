@@ -4,7 +4,12 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch: 
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '手动发布的版本号 (例如: 1.0.0)'
+        required: true
+        default: '1.0.0'
 
 permissions:
   contents: write
@@ -12,6 +17,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+  MINIMUM_VERSION: "4.1.7"
 
 jobs:
   release-mac-arm64:
@@ -47,10 +53,14 @@ jobs:
             fi
           done
 
-      - name: Sync version with tag
+      - name: Sync version
         shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "Syncing package.json version to $VERSION"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
@@ -81,9 +91,12 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/release-utils.sh
-          TAG=${GITHUB_REF_NAME}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           REPO=${{ github.repository }}
-          MINIMUM_VERSION="4.1.7"
           wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
           for YML_FILE in latest-mac.yml latest-arm64-mac.yml; do
             if ! retry_cmd 5 3 gh release download "$TAG" --repo "$REPO" --pattern "$YML_FILE" --output "/tmp/$YML_FILE"; then
@@ -91,7 +104,7 @@ jobs:
               continue
             fi
             if ! grep -q 'minimumVersion' "/tmp/$YML_FILE"; then
-              echo "minimumVersion: $MINIMUM_VERSION" >> "/tmp/$YML_FILE"
+              echo "minimumVersion: ${{ env.MINIMUM_VERSION }}" >> "/tmp/$YML_FILE"
             fi
             retry_cmd 5 3 gh release upload "$TAG" --repo "$REPO" "/tmp/$YML_FILE" --clobber
           done
@@ -110,6 +123,12 @@ jobs:
         with:
           node-version: 24
           cache: "npm"
+          
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm flatpak flatpak-builder fakeroot
+
       - name: Install Dependencies
         run: npm install
 
@@ -118,10 +137,14 @@ jobs:
         run: |
           [ -f "resources/key/linux/x64/xkey_helper" ] && chmod +x "resources/key/linux/x64/xkey_helper" || echo "File not found"
 
-      - name: Sync version with tag
+      - name: Sync version
         shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "Syncing package.json version to $VERSION"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
@@ -131,11 +154,11 @@ jobs:
           npx tsc
           npx vite build
 
-      - name: Package and Publish Linux
+      - name: Package and Publish Linux (DEB, RPM, Flatpak)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npx electron-builder --linux --publish always '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}'
+          npx electron-builder --linux deb rpm flatpak --publish always '--config.publish.owner=${{ github.repository_owner }}' '--config.publish.repo=${{ github.event.repository.name }}'
 
       - name: Inject minimumVersion into latest yml
         env:
@@ -144,13 +167,16 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/release-utils.sh
-          TAG=${GITHUB_REF_NAME}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           REPO=${{ github.repository }}
-          MINIMUM_VERSION="4.1.7"
           wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
           retry_cmd 5 3 gh release download "$TAG" --repo "$REPO" --pattern "latest-linux.yml" --output "/tmp/latest-linux.yml" || true
           if [ -f /tmp/latest-linux.yml ] && ! grep -q 'minimumVersion' /tmp/latest-linux.yml; then
-            echo "minimumVersion: $MINIMUM_VERSION" >> /tmp/latest-linux.yml
+            echo "minimumVersion: ${{ env.MINIMUM_VERSION }}" >> /tmp/latest-linux.yml
             retry_cmd 5 3 gh release upload "$TAG" --repo "$REPO" /tmp/latest-linux.yml --clobber
           fi
 
@@ -171,10 +197,14 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Sync version with tag
+      - name: Sync version
         shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "Syncing package.json version to $VERSION"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
@@ -197,13 +227,16 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/release-utils.sh
-          TAG=${GITHUB_REF_NAME}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           REPO=${{ github.repository }}
-          MINIMUM_VERSION="4.1.7"
           wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
           retry_cmd 5 3 gh release download "$TAG" --repo "$REPO" --pattern "latest.yml" --output "/tmp/latest.yml" || true
           if [ -f /tmp/latest.yml ] && ! grep -q 'minimumVersion' /tmp/latest.yml; then
-            echo "minimumVersion: $MINIMUM_VERSION" >> /tmp/latest.yml
+            echo "minimumVersion: ${{ env.MINIMUM_VERSION }}" >> /tmp/latest.yml
             retry_cmd 5 3 gh release upload "$TAG" --repo "$REPO" /tmp/latest.yml --clobber
           fi
 
@@ -224,10 +257,14 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Sync version with tag
+      - name: Sync version
         shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "Syncing package.json version to $VERSION"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
@@ -250,13 +287,16 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/release-utils.sh
-          TAG=${GITHUB_REF_NAME}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           REPO=${{ github.repository }}
-          MINIMUM_VERSION="4.1.7"
           wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
           retry_cmd 5 3 gh release download "$TAG" --repo "$REPO" --pattern "latest-arm64.yml" --output "/tmp/latest-arm64.yml" || true
           if [ -f /tmp/latest-arm64.yml ] && ! grep -q 'minimumVersion' /tmp/latest-arm64.yml; then
-            echo "minimumVersion: $MINIMUM_VERSION" >> /tmp/latest-arm64.yml
+            echo "minimumVersion: ${{ env.MINIMUM_VERSION }}" >> /tmp/latest-arm64.yml
             retry_cmd 5 3 gh release upload "$TAG" --repo "$REPO" /tmp/latest-arm64.yml --clobber
           fi
 
@@ -282,7 +322,12 @@ jobs:
           set -euo pipefail
           source .github/scripts/release-utils.sh
 
-          TAG="$GITHUB_REF_NAME"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          
           REPO="$GITHUB_REPOSITORY"
           RELEASE_PAGE="https://github.com/$REPO/releases/tag/$TAG"
           wait_for_release_id "$REPO" "$TAG" 12 2 >/dev/null
@@ -303,8 +348,11 @@ jobs:
           if [ -z "$MAC_ASSET" ]; then
             MAC_ASSET="$(pick_asset "arm64\\.zip$")"
           fi
-          LINUX_TAR_ASSET="$(pick_asset "\\.tar\\.gz$")"
-          LINUX_APPIMAGE_ASSET="$(pick_asset "\\.AppImage$")"
+          
+          # 💡 修改为抓取 deb, rpm 和 flatpak 文件
+          LINUX_DEB_ASSET="$(pick_asset "\\.deb$")"
+          LINUX_RPM_ASSET="$(pick_asset "\\.rpm$")"
+          LINUX_FLATPAK_ASSET="$(pick_asset "\\.flatpak$")"
 
           build_link() {
             local name="$1"
@@ -316,8 +364,9 @@ jobs:
           WINDOWS_URL="$(build_link "$WINDOWS_ASSET")"
           WINDOWS_ARM64_URL="$(build_link "$WINDOWS_ARM64_ASSET")"
           MAC_URL="$(build_link "$MAC_ASSET")"
-          LINUX_TAR_URL="$(build_link "$LINUX_TAR_ASSET")"
-          LINUX_APPIMAGE_URL="$(build_link "$LINUX_APPIMAGE_ASSET")"
+          LINUX_DEB_URL="$(build_link "$LINUX_DEB_ASSET")"
+          LINUX_RPM_URL="$(build_link "$LINUX_RPM_ASSET")"
+          LINUX_FLATPAK_URL="$(build_link "$LINUX_FLATPAK_ASSET")"
 
           cat > release_notes.md <<EOF
           ## 更新日志
@@ -330,8 +379,9 @@ jobs:
           - Windows x64（Win10+）: [点击下载](${WINDOWS_URL:-$RELEASE_PAGE})
           - Windows arm64: [点击下载](${WINDOWS_ARM64_URL:-$RELEASE_PAGE})
           - macOS（M系列芯片）: [点击下载](${MAC_URL:-$RELEASE_PAGE})
-          - Linux (.tar.gz): [点击下载](${LINUX_TAR_URL:-$RELEASE_PAGE})
-          - Linux (.AppImage): [点击下载](${LINUX_APPIMAGE_URL:-$RELEASE_PAGE})
+          - Linux (.deb): [点击下载](${LINUX_DEB_URL:-$RELEASE_PAGE})
+          - Linux (.rpm): [点击下载](${LINUX_RPM_URL:-$RELEASE_PAGE})
+          - Linux (.flatpak): [点击下载](${LINUX_FLATPAK_URL:-$RELEASE_PAGE})
 
           ## macOS 安装提示
           - 如果被系统提示已损坏，你需要在终端执行以下命令去除隔离标记：
@@ -342,51 +392,3 @@ jobs:
           EOF
 
           retry_cmd 5 3 gh release edit "$TAG" --repo "$REPO" --notes-file release_notes.md
-
-  deploy-aur:
-    runs-on: ubuntu-latest
-    needs: [release-linux]
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Check AUR credentials
-        id: aur-credentials
-        shell: bash
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: |
-          if [ -z "${AUR_SSH_PRIVATE_KEY}" ]; then
-            echo "::notice::AUR_SSH_PRIVATE_KEY is not configured; skipping AUR publish."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout code
-        if: steps.aur-credentials.outputs.enabled == 'true'
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Update PKGBUILD version
-        if: steps.aur-credentials.outputs.enabled == 'true'
-        run: |
-          NEW_VER=$(echo "${{ github.ref_name }}" | sed 's/^v//')
-          sed -i "s/^pkgver=.*/pkgver=${NEW_VER}/" resources/installer/linux/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" resources/installer/linux/PKGBUILD
-
-      - name: Publish AUR package
-        if: steps.aur-credentials.outputs.enabled == 'true'
-        uses: KSXGitHub/github-actions-deploy-aur@master
-        with:
-          pkgname: weflow
-          pkgbuild: resources/installer/linux/PKGBUILD
-          updpkgsums: true
-          assets: |
-            resources/installer/linux/weflow.desktop
-            resources/installer/linux/icon.png
-            resources/installer/linux/.gitignore
-
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_username: H3CoF6
-          commit_email: h3cof6@gmail.com
-          ssh_keyscan_types: ed25519
